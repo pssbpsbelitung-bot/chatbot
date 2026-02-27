@@ -1,20 +1,40 @@
 import fs from "fs";
 
-console.log("🚀 Crawler mulai...");
+const BASE = "https://belitungkab.bps.go.id";
 
-try {
-  const url = "https://belitungkab.bps.go.id/id/publication";
-  console.log("🌐 Target:", url);
+async function crawl() {
+  console.log("🚀 Mulai crawl BPS Belitung");
 
-  // TEST TULIS FILE DULU
-  fs.writeFileSync("index.json", JSON.stringify({
-    status: "crawler jalan",
-    waktu: new Date().toISOString()
-  }, null, 2));
+  const res = await fetch(`${BASE}/id/publication`);
+  const html = await res.text();
 
-  console.log("✅ index.json berhasil ditulis");
-} catch (err) {
-  console.error("🔥 ERROR ASLI NIH:");
-  console.error(err);
-  process.exit(1);
+  // ambil semua halaman publikasi
+  const pages = [...html.matchAll(/href="(\/id\/publication\/\d+\/\d+\/[^"]+\.html)"/g)]
+    .map(m => BASE + m[1]);
+
+  console.log("📄 Halaman publikasi ditemukan:", pages.length);
+
+  const results = [];
+
+  for (const page of pages) {
+    console.log("➡️ Buka:", page);
+    const p = await fetch(page);
+    const pHtml = await p.text();
+
+    const pdf = pHtml.match(/href="([^"]+\.pdf)"/);
+    if (pdf) {
+      results.push({
+        page,
+        pdf: pdf[1].startsWith("http") ? pdf[1] : BASE + pdf[1]
+      });
+    }
+  }
+
+  fs.writeFileSync("index.json", JSON.stringify(results, null, 2));
+  console.log("✅ Selesai, total PDF:", results.length);
 }
+
+crawl().catch(err => {
+  console.error("🔥 ERROR:", err);
+  process.exit(1);
+});
