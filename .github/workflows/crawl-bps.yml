@@ -1,35 +1,60 @@
-name: Crawl PDF BPS Belitung
+const fs = require("fs");
+const cheerio = require("cheerio");
 
-permissions:
-  contents: write
+const BASE = "https://belitungkab.bps.go.id";
+const START = BASE + "/id/publication";
 
-on:
-  workflow_dispatch:
+async function fetchHTML(url) {
+  const res = await fetch(url);
+  return await res.text();
+}
 
-jobs:
-  crawl:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-      with:
-        persist-credentials: true
+async function run() {
+  const index = [];
+  const visited = new Set();
 
-    - name: Setup Node
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20
+  const html = await fetchHTML(START);
+  const $ = cheerio.load(html);
 
-    - name: Install dependencies
-      run: npm install
+  // ambil halaman detail
+  $("a[href*='/id/publication/']").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href && href.endsWith(".html")) {
+      visited.add(href.startsWith("http") ? href : BASE + href);
+    }
+  });
 
-    - name: Run crawler
-      run: node crawler.js
+  console.log("Detail pages:", visited.size);
 
-    - name: Commit hasil
-      run: |
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        git add data/index.json
-        git commit -m "Update index PDF" || echo "No changes"
-        git push
+  for (const page of visited) {
+    try {
+      const detail = await fetchHTML(page);
+      const d = cheerio.load(detail);
+
+      const title =
+        d("h1").first().text().trim() ||
+        d("meta[property='og:title']").attr("content");
+
+      const pdf = d("a[href$='.pdf']").attr("href");
+
+      if (pdf) {
+        index.push({
+          title,
+          url: pdf.startsWith("http") ? pdf : BASE + pdf
+        });
+      }
+    } catch (e) {
+      console.log("Skip:", page);
+    }
+  }
+
+  fs.writeFileSync(
+    "data/index.json",
+    JSON.stringify(index, null, 2),
+    "utf-8"
+  );
+
+  console.log("TOTAL PDF:", index.length);
+}
+
+run();
