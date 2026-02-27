@@ -1,0 +1,59 @@
+name: Crawl PDF BPS Belitung
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 1 * * 1-5" # Senin-Jumat jam 08.00 WIB
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install requests beautifulsoup4
+
+    - name: Crawl PDF publikasi
+      run: |
+        python << 'EOF'
+        import requests, json
+        from bs4 import BeautifulSoup
+
+        BASE = "https://belitungkab.bps.go.id"
+        START = BASE + "/id/publication.html"
+
+        r = requests.get(START, timeout=30)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        pdfs = []
+        for a in soup.select("a[href$='.pdf']"):
+            url = a['href']
+            if not url.startswith("http"):
+                url = BASE + url
+            pdfs.append({
+                "title": a.text.strip(),
+                "url": url
+            })
+
+        with open("data/index.json", "w", encoding="utf-8") as f:
+            json.dump(pdfs, f, ensure_ascii=False, indent=2)
+
+        print("Total PDF:", len(pdfs))
+        EOF
+
+    - name: Commit index.json
+      run: |
+        git config user.name "github-actions"
+        git config user.email "github-actions@github.com"
+        git add data/index.json
+        git commit -m "Update index PDF BPS" || echo "No changes"
+        git push
