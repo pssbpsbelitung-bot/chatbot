@@ -1,12 +1,13 @@
 const fs = require("fs");
+const axios = require("axios");
 const cheerio = require("cheerio");
 
 const BASE = "https://belitungkab.bps.go.id";
 const START = BASE + "/id/publication";
 
 async function fetchHTML(url) {
-  const res = await fetch(url);
-  return await res.text();
+  const res = await axios.get(url, { timeout: 30000 });
+  return res.data;
 }
 
 async function run() {
@@ -16,7 +17,6 @@ async function run() {
   const html = await fetchHTML(START);
   const $ = cheerio.load(html);
 
-  // ambil halaman detail
   $("a[href*='/id/publication/']").each((_, el) => {
     const href = $(el).attr("href");
     if (href && href.endsWith(".html")) {
@@ -28,8 +28,8 @@ async function run() {
 
   for (const page of visited) {
     try {
-      const detail = await fetchHTML(page);
-      const d = cheerio.load(detail);
+      const detailHTML = await fetchHTML(page);
+      const d = cheerio.load(detailHTML);
 
       const title =
         d("h1").first().text().trim() ||
@@ -48,14 +48,8 @@ async function run() {
     }
   }
 
-  fs.writeFileSync(
-    "data/index.json",
-    JSON.stringify(index, null, 2),
-    "utf-8"
-  );
-
+  fs.writeFileSync("data/index.json", JSON.stringify(index, null, 2));
   console.log("TOTAL PDF:", index.length);
 }
 
 run();
-
