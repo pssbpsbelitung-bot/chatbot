@@ -1,32 +1,63 @@
-name: Update Index Publikasi BPS
+import fs from "fs";
+import fetch from "node-fetch";
+import cheerio from "cheerio";
 
-on:
-  schedule:
-    - cron: "0 2 * * 0" # Minggu jam 02.00 UTC
-  workflow_dispatch:
+const BASE = "https://belitungkab.bps.go.id";
+const START = BASE + "/id/publication";
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+async function fetchHTML(url) {
+  const res = await fetch(url, { timeout: 30000 });
+  return await res.text();
+}
 
-    steps:
-      - uses: actions/checkout@v4
+async function run() {
+  const index = [];
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
+  // 1️⃣ ambil halaman daftar publikasi
+  const html = await fetchHTML(START);
+  const $ = cheerio.load(html);
 
-      - name: Install dependencies
-        run: npm install
+  const detailPages = new Set();
 
-      - name: Run crawler
-        run: node crawler.js
+  $("a[href*='/id/publication/']").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href && href.endsWith(".html")) {
+      detailPages.add(href.startsWith("http") ? href : BASE + href);
+    }
+  });
 
-      - name: Commit index
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add data/index.json
-          git commit -m "Auto update index publikasi" || echo "Tidak ada perubahan"
-          git push
+  console.log("Detail pages ditemukan:", detailPages.size);
+
+  // 2️⃣ masuk ke halaman detail → ambil PDF
+  for (const page of detailPages) {
+    try {
+      const detailHTML = await fetchHTML(page);
+      const d = cheerio.load(detailHTML);
+
+      const title =
+        d("h1").first().text().trim() ||
+        d("meta[property='og:title']").attr("content");
+
+      const pdf = d("a[href$='.pdf']").attr("href");
+
+      if (pdf) {
+        index.push({
+          title,
+          url: pdf.startsWith("http") ? pdf : BASE + pdf
+        });
+      }
+    } catch (e) {
+      console.log("Skip:", page);
+    }
+  }
+
+  fs.writeFileSync(
+    "data/index.json",
+    JSON.stringify(index, null, 2),
+    "utf-8"
+  );
+
+  console.log("TOTAL PDF:", index.length);
+}
+
+run();
