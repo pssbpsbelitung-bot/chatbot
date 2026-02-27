@@ -1,64 +1,60 @@
-import axios from "axios";
-import fs from "fs";
-import pdf from "pdf-parse";
+const fs = require("fs");
+const cheerio = require("cheerio");
 
-const PUBLICATION_URL = "https://belitungkab.bps.go.id/publication";
-const INDEX_PATH = "data/index.json";
-const CHUNK_SIZE = 1200;
+const BASE = "https://belitungkab.bps.go.id";
+const START = BASE + "/id/publication";
 
-// pastikan folder data ada
-if (!fs.existsSync("data")) fs.mkdirSync("data");
-
-// load index lama
-let index = [];
-if (fs.existsSync(INDEX_PATH)) {
-  index = JSON.parse(fs.readFileSync(INDEX_PATH, "utf8"));
+async function fetchHTML(url) {
+  const res = await fetch(url);
+  return await res.text();
 }
 
-// helper: cek PDF sudah pernah diproses
-const sudahAda = (link) => index.some(i => i.link === link);
+async function run() {
+  const index = [];
+  const visited = new Set();
 
-// ambil halaman publikasi
-const html = (await axios.get(PUBLICATION_URL)).data;
+  const html = await fetchHTML(START);
+  const $ = cheerio.load(html);
 
-// ambil semua link PDF
-const pdfLinks = [...html.matchAll(/href="(https?:\/\/.*?\.pdf)"/g)]
-  .map(m => m[1])
-  .filter((v, i, a) => a.indexOf(v) === i);
-
-console.log(`Ditemukan ${pdfLinks.length} PDF`);
-
-for (const link of pdfLinks) {
-
-  if (sudahAda(link)) {
-    console.log("Skip (sudah ada):", link);
-    continue;
-  }
-
-  console.log("Proses:", link);
-
-  const buffer = (await axios.get(link, {
-    responseType: "arraybuffer",
-    timeout: 30000
-  })).data;
-
-  const parsed = await pdf(buffer);
-  const text = parsed.text.replace(/\s+/g, " ").trim();
-
-  const chunks = [];
-  for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-    chunks.push(text.substring(i, i + CHUNK_SIZE));
-  }
-
-  chunks.forEach((chunk, i) => {
-    index.push({
-      judul: `Publikasi BPS Belitung (Bagian ${i + 1})`,
-      isi: chunk,
-      link: link
-    });
+  // ambil halaman detail
+  $("a[href*='/id/publication/']").each((_, el) => {
+    const href = $(el).attr("href");
+    if (href && href.endsWith(".html")) {
+      visited.add(href.startsWith("http") ? href : BASE + href);
+    }
   });
+
+  console.log("Detail pages:", visited.size);
+
+  for (const page of visited) {
+    try {
+      const detail = await fetchHTML(page);
+      const d = cheerio.load(detail);
+
+      const title =
+        d("h1").first().text().trim() ||
+        d("meta[property='og:title']").attr("content");
+
+      const pdf = d("a[href$='.pdf']").attr("href");
+
+      if (pdf) {
+        index.push({
+          title,
+          url: pdf.startsWith("http") ? pdf : BASE + pdf
+        });
+      }
+    } catch (e) {
+      console.log("Skip:", page);
+    }
+  }
+
+  fs.writeFileSync(
+    "data/index.json",
+    JSON.stringify(index, null, 2),
+    "utf-8"
+  );
+
+  console.log("TOTAL PDF:", index.length);
 }
 
-// simpan index terbaru
-fs.writeFileSync(INDEX_PATH, JSON.stringify(index, null, 2));
-console.log("Index diperbarui:", index.length, "potongan");
+run();
